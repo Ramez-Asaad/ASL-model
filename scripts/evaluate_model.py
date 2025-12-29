@@ -43,17 +43,18 @@ def main():
     
     # Load data
     print(f"Loading test data from {args.data_dir}...")
-    X, y = load_images_from_folder(args.data_dir)
+    X_test, y_test = load_images_from_folder(args.data_dir)
     
-    # Prepare (we only need test set, but function expects split)
-    _, X_test, _, y_test_cat, _, y_test = prepare_data(X, y, test_size=1.0)
+    if len(X_test) == 0:
+        print("Error: No images found!")
+        print("Make sure class folders (A, B, C, ..., Z, del, nothing, space) exist in the data directory.")
+        print(f"Check: ls {args.data_dir}")
+        sys.exit(1)
     
-    # Actually use all data as test
+    # One-hot encode labels for model evaluation
     from tensorflow.keras.utils import to_categorical
     from src.config import NUM_CLASSES
-    y_test_cat = to_categorical(y, NUM_CLASSES)
-    X_test = X
-    y_test = y
+    y_test_cat = to_categorical(y_test, NUM_CLASSES)
     
     print(f"Evaluating on {len(X_test)} samples...")
     
