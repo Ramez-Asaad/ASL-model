@@ -16,16 +16,33 @@ from .config import (
 
 def load_images_from_folder(folder_path, verbose=True):
     """
-    Load all images from a folder structure where each subfolder is a class.
+    Load images from a folder. Supports two formats:
+    1. Folder structure: class_name/image.jpg (training format)
+    2. Flat files: class_test.jpg or class.jpg (test format)
     
     Args:
-        folder_path: Path to the training data directory
+        folder_path: Path to the data directory
         verbose: Whether to print progress
     
     Returns:
         X: numpy array of images (N, IMAGE_SIZE, IMAGE_SIZE, 3)
         y: numpy array of labels (N,)
     """
+    # Check if we have class folders or flat files
+    items = os.listdir(folder_path)
+    has_class_folders = any(
+        os.path.isdir(os.path.join(folder_path, item)) and item in LABEL_TO_IDX
+        for item in items
+    )
+    
+    if has_class_folders:
+        return _load_from_class_folders(folder_path, verbose)
+    else:
+        return _load_from_flat_files(folder_path, verbose)
+
+
+def _load_from_class_folders(folder_path, verbose=True):
+    """Load images from class folder structure (training format)."""
     # Count total images first
     total_images = 0
     for folder_name in os.listdir(folder_path):
@@ -35,7 +52,7 @@ def load_images_from_folder(folder_path, verbose=True):
                                if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
     
     if verbose:
-        print(f"Found {total_images} images to load...")
+        print(f"Found {total_images} images in class folders...")
     
     X = np.empty((total_images, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
     y = np.empty((total_images,), dtype=np.int32)
@@ -80,6 +97,55 @@ def load_images_from_folder(folder_path, verbose=True):
     
     if verbose:
         print(f"Successfully loaded {cnt} images.")
+    
+    return X, y
+
+
+def _load_from_flat_files(folder_path, verbose=True):
+    """Load images from flat file structure (test format like A_test.jpg)."""
+    image_files = [f for f in os.listdir(folder_path) 
+                   if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+    
+    if verbose:
+        print(f"Found {len(image_files)} flat image files...")
+    
+    X_list = []
+    y_list = []
+    
+    for filename in image_files:
+        # Extract class from filename: 'A_test.jpg' -> 'A', 'nothing_test.jpg' -> 'nothing'
+        name_without_ext = os.path.splitext(filename)[0]  # 'A_test'
+        
+        # Try to extract class name (handle formats like 'A_test', 'A', 'nothing_test')
+        class_name = None
+        
+        # Check common patterns
+        for label in LABEL_TO_IDX.keys():
+            if name_without_ext == label or name_without_ext.startswith(label + '_'):
+                class_name = label
+                break
+        
+        if class_name is None:
+            if verbose:
+                print(f"Warning: Could not determine class for '{filename}', skipping...")
+            continue
+        
+        label = LABEL_TO_IDX[class_name]
+        
+        img_path = os.path.join(folder_path, filename)
+        img = cv2.imread(img_path)
+        
+        if img is not None:
+            img_resized = resize(img, (IMAGE_SIZE, IMAGE_SIZE, 3), 
+                                anti_aliasing=True, preserve_range=False)
+            X_list.append(img_resized.astype(np.float32))
+            y_list.append(label)
+    
+    X = np.array(X_list) if X_list else np.empty((0, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
+    y = np.array(y_list, dtype=np.int32) if y_list else np.empty((0,), dtype=np.int32)
+    
+    if verbose:
+        print(f"Successfully loaded {len(X)} images.")
     
     return X, y
 
