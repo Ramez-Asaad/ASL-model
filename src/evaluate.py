@@ -57,7 +57,11 @@ def print_classification_report(y_true, y_pred, labels=CLASS_LABELS):
         y_pred: Predicted labels
         labels: Class label names
     """
-    report = classification_report(y_true, y_pred, target_names=labels)
+    # Get unique classes present in the data
+    unique_classes = sorted(set(y_true) | set(y_pred))
+    present_labels = [labels[i] for i in unique_classes]
+    
+    report = classification_report(y_true, y_pred, labels=unique_classes, target_names=present_labels)
     print("Classification Report:")
     print(report)
     return report
@@ -75,11 +79,15 @@ def plot_confusion_matrix(y_true, y_pred, labels=CLASS_LABELS,
         figsize: Figure size
         save_path: Optional path to save figure
     """
-    cm = confusion_matrix(y_true, y_pred)
+    # Get unique classes present in the data
+    unique_classes = sorted(set(y_true) | set(y_pred))
+    present_labels = [labels[i] for i in unique_classes]
+    
+    cm = confusion_matrix(y_true, y_pred, labels=unique_classes)
     
     plt.figure(figsize=figsize)
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                xticklabels=labels, yticklabels=labels)
+                xticklabels=present_labels, yticklabels=present_labels)
     plt.xlabel('Predicted')
     plt.ylabel('True')
     plt.title('Confusion Matrix')
