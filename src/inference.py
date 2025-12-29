@@ -1,83 +1,136 @@
+"""
+Real-time inference for ASL Detection.
+"""
 
 import cv2
 import numpy as np
-import torch
-import os
-import sys
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '../src'))
-from feature_extractor import FeatureExtractor
-from classifier import ASLClassifier
+from .config import IMAGE_SIZE, IDX_TO_LABEL
+from .data_loader import preprocess_single_image
+from .model import load_model
+
 
 class ASLInferenceService:
-    def __init__(self, model_path, classes, sequence_length=30):
-        self.classes = classes
-        self.sequence_length = sequence_length
-        self.extractor = FeatureExtractor()
+    """Real-time ASL gesture recognition service."""
+    
+    def __init__(self, model_path):
+        """
+        Initialize the inference service.
         
-        # Load Model
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = ASLClassifier(input_size=42, num_classes=len(classes)).to(self.device)
-        
-        if os.path.exists(model_path):
-            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
-            self.model.eval()
-            print("Model loaded successfully.")
-        else:
-            print(f"Warning: Model file not found at {model_path}. Running with uninitialized weights.")
-
-        self.sequence_buffer = []
-
+        Args:
+            model_path: Path to trained .h5 model
+        """
+        print(f"Loading model from {model_path}...")
+        self.model = load_model(model_path)
+        print("Model loaded successfully.")
+    
     def predict(self, image):
         """
-        Takes an image, extracts features, updates buffer, and returns prediction.
+        Predict ASL gesture from an image.
+        
+        Args:
+            image: BGR image from cv2
+        
+        Returns:
+            (label, confidence) tuple
         """
-        landmarks = self.extractor.extract_landmarks(image)
-        # Check if landmarks are all zeros (no hand)
-        if np.all(landmarks == 0):
-             return None, 0.0
-
-        self.sequence_buffer.append(landmarks)
+        # Preprocess
+        processed = preprocess_single_image(image)
         
-        # Keep only the last 'sequence_length' frames
-        self.sequence_buffer = self.sequence_buffer[-self.sequence_length:]
+        # Predict
+        predictions = self.model.predict(processed, verbose=0)
         
-        if len(self.sequence_buffer) == self.sequence_length:
-            input_seq = np.array([self.sequence_buffer]) # Add batch dim: (1, 30, 42)
-            input_tensor = torch.tensor(input_seq, dtype=torch.float32).to(self.device)
-            
-            with torch.no_grad():
-                outputs = self.model(input_tensor)
-                probabilities = torch.softmax(outputs, dim=1)
-                confidence, predicted_idx = torch.max(probabilities, 1)
-                
-                return self.classes[predicted_idx.item()], confidence.item()
+        # Get top prediction
+        predicted_idx = np.argmax(predictions[0])
+        confidence = predictions[0][predicted_idx]
+        label = IDX_TO_LABEL[predicted_idx]
         
-        return None, 0.0
-
-if __name__ == "__main__":
-    # IPNHand Classes (13 distinct gestures)
-    classes = ['0.0', '1.0', '10.0', '11.0', '12.0', '2.0', '3.0', '4.0', '5.0', '6.0', '7.0', '8.0', '9.0']
+        return label, confidence
     
-    # Path relative to this script
-    model_path = os.path.join(os.path.dirname(__file__), '../asl_model.pth')
+    def predict_top_k(self, image, k=3):
+        """
+        Get top-k predictions.
+        
+        Args:
+            image: BGR image from cv2
+            k: Number of top predictions to return
+        
+        Returns:
+            List of (label, confidence) tuples
+        """
+        processed = preprocess_single_image(image)
+        predictions = self.model.predict(processed, verbose=0)[0]
+        
+        # Get top-k indices
+        top_indices = np.argsort(predictions)[-k:][::-1]
+        
+        results = []
+        for idx in top_indices:
+            results.append((IDX_TO_LABEL[idx], predictions[idx]))
+        
+        return results
+
+
+def run_webcam_inference(model_path):
+    """
+    Run real-time inference from webcam.
     
-    service = ASLInferenceService(model_path, classes)
+    Args:
+        model_path: Path to trained model
+    """
+    service = ASLInferenceService(model_path)
     
     cap = cv2.VideoCapture(0)
+    print("\n=== ASL Gesture Recognition ===")
+    print("Press 'q' to quit\n")
+    
     while cap.isOpened():
         ret, frame = cap.read()
-        if not ret: break
+        if not ret:
+            break
         
-        label, conf = service.predict(frame)
+        # Get prediction
+        label, confidence = service.predict(frame)
         
-        # Display
-        text = f"Pred: {label} ({conf:.2f})" if label else "Waiting for buffer..."
-        cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.imshow('ASL Inference', frame)
+        # Color based on confidence
+        if confidence >= 0.7:
+            color = (0, 255, 0)  # Green
+        elif confidence >= 0.4:
+            color = (0, 255, 255)  # Yellow
+        else:
+            color = (0, 165, 255)  # Orange
+        
+        # Draw UI
+        text = f"{label}: {confidence*100:.0f}%"
+        
+        # Background rectangle
+        cv2.rectangle(frame, (5, 5), (200, 50), (0, 0, 0), -1)
+        cv2.rectangle(frame, (5, 5), (200, 50), color, 2)
+        
+        # Text
+        cv2.putText(frame, text, (15, 35), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+        
+        # Draw ROI hint (center square)
+        h, w = frame.shape[:2]
+        roi_size = min(h, w) // 2
+        x1 = (w - roi_size) // 2
+        y1 = (h - roi_size) // 2
+        cv2.rectangle(frame, (x1, y1), (x1 + roi_size, y1 + roi_size), 
+                     (100, 100, 100), 2)
+        cv2.putText(frame, "Show gesture here", (x1, y1 - 10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
+        
+        cv2.imshow('ASL Gesture Recognition', frame)
         
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-            
+    
     cap.release()
     cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    import os
+    model_path = os.path.join(os.path.dirname(__file__), '../models/asl_cnn.h5')
+    run_webcam_inference(model_path)

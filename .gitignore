@@ -6,3 +6,7 @@ __pycache__/
 .ipynb_checkpoints
 data/processed/
 data/processed_ipn/
+venv2/
+asl_alphabet_*/
+*.zip
+data/archive.zip
